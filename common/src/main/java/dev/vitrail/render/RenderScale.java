@@ -549,34 +549,6 @@ public final class RenderScale {
 		repairSize(main, main.width, main.height);
 	}
 
-	/**
-	 * Repairs the main target to the size of the colour view a pass is about to open with,
-	 * and hands back the fresh views to open it on.
-	 * <p>
-	 * The frame that stops an external temporal upscaler resolving can hand a pass a full-size
-	 * colour beside the small depth the upscaler's target still has installed, and the pass
-	 * creation throws on the pair. Repairing the target and opening the game's own pass on
-	 * the fresh views turns that frame's crash into one unshaded pass; the pack is warming
-	 * on exactly these frames and misses nothing.
-	 *
-	 * @return the fresh colour and depth views, or null where there is nothing to repair to
-	 */
-	public static GpuTextureView[] repairViews(GpuTextureView colour) {
-		Minecraft minecraft = Minecraft.getInstance();
-		RenderTarget main = minecraft == null ? null : minecraft.gameRenderer.mainRenderTarget();
-		if (main == null || colour == null || colour.texture() == null) {
-			return null;
-		}
-
-		GpuTexture source = colour.texture();
-		repairSize(main, source.getWidth(0), source.getHeight(0));
-		if (main.getColorTextureView() == null || main.getDepthTextureView() == null) {
-			return null;
-		}
-
-		return new GpuTextureView[] {main.getColorTextureView(), main.getDepthTextureView()};
-	}
-
 	/** Whether this frame will render a world, told by the head of {@code render}. */
 	public static void frameIntent(boolean rendersWorld) {
 		worldComing = rendersWorld;

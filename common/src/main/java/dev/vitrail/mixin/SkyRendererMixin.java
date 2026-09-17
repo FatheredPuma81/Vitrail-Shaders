@@ -3,11 +3,13 @@ package dev.vitrail.mixin;
 import dev.vitrail.render.GeometryHold;
 import dev.vitrail.render.RenderScale;
 import dev.vitrail.render.SkyDraw;
+import dev.vitrail.Vitrail;
 
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
+import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.systems.CommandEncoder;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.math.Axis;
@@ -15,8 +17,8 @@ import net.minecraft.client.renderer.DynamicUniforms;
 import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderPassDescriptor;
 import com.mojang.blaze3d.textures.GpuSampler;
-import com.mojang.blaze3d.textures.GpuTexture;
 import com.mojang.blaze3d.textures.GpuTextureView;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.SkyRenderer;
 import net.minecraft.world.level.MoonPhase;
 import org.spongepowered.asm.mixin.Mixin;
@@ -197,23 +199,6 @@ public abstract class SkyRendererMixin {
 		return original.call(uniforms, modelView);
 	}
 
-	/**
-	 * Whether the two views a sky pass is about to open with disagree in size, which is what
-	 * the pass creation throws on. A view without an image cannot disagree and answers false.
-	 */
-	private static boolean mismatched(GpuTextureView colour, GpuTextureView depth) {
-		if (colour == null || colour.texture() == null || depth == null
-				|| depth.texture() == null) {
-			return false;
-		}
-
-		GpuTexture colourImage = colour.texture();
-		GpuTexture depthImage = depth.texture();
-
-		return colourImage.getWidth(0) != depthImage.getWidth(0)
-				|| colourImage.getHeight(0) != depthImage.getHeight(0);
-	}
-
 	@WrapOperation(
 			method = {"renderSkyDisc", "renderDarkDisc", "renderStars", "renderSunriseAndSunset", "renderSun",
 					"renderMoon", "renderEndSky", "renderEndFlash"},
@@ -229,30 +214,73 @@ public abstract class SkyRendererMixin {
 	private RenderPass vitrail$open(CommandEncoder encoder, Supplier<String> label,
 			GpuTextureView colour, Optional<?> clearColour, GpuTextureView depth,
 			OptionalDouble clearDepth, Operation<RenderPass> original) {
-		// A half-resized main target never reaches the pack: the frame that stops an
-		// external temporal upscaler resolving can hand the sky a full-size colour with
-		// the small depth still installed, and the pass creation throws on the pair.
-		// That one sky draws unshaded while the target is repaired to the colour's
-		// size, and the game opens its own pass on the fresh views.
-		if (mismatched(colour, depth)) {
-			GpuTextureView[] repaired = RenderScale.repairViews(colour);
-			if (repaired != null) {
-				this.vitrail$pipeline = null;
-
-				return original.call(encoder, label, repaired[0], clearColour, repaired[1],
-						clearDepth);
-			}
-		}
-
 		this.vitrail$pipeline = SkyDraw.element(label.get(), this.vitrail$modelView,
 				this.vitrail$colour);
 		RenderPassDescriptor descriptor = this.vitrail$pipeline == null
 				? null
 				: SkyDraw.descriptor(colour, depth);
 
-		return descriptor == null
-				? original.call(encoder, label, colour, clearColour, depth, clearDepth)
-				: GeometryHold.open(encoder, descriptor);
+		if (descriptor == null) {
+			return original.call(encoder, label, colour, clearColour, depth, clearDepth);
+		}
+
+		try {
+			return GeometryHold.open(encoder, descriptor);
+		} catch (IllegalArgumentException e) {
+			RenderPass retried = vitrail$reopen(encoder, e);
+			if (retried != null) {
+				return retried;
+			}
+
+			throw e;
+		}
+	}
+
+	/**
+	 * Opens the sky again after a half resize broke the first open.
+	 * <p>
+	 * The frame that starts or stops an external temporal upscaler resolving can reach the
+	 * sky with the colour and the depth at two different sizes - a full-size colour beside
+	 * the small depth on the way out, a low-res colour beside the full-size depth on the
+	 * way in - and the pass creation throws on the pair. Comparing the two views ahead of
+	 * the open is no repair: the views an upscaler swaps in carry no image back out, so
+	 * there is nothing to compare. The failure itself is the check, and the repair is the
+	 * main target healed to its own fields and the sky opened again on its fresh views:
+	 * where the upscaler has the target hijacked those are the low-res set the frame runs
+	 * at, and the pack's sky draws without a glitch. Anything else - a failure that is not
+	 * a size, a target that heals into disagreement again - rethrows the first failure.
+	 *
+	 * @return the reopened pass, or null where the first failure stands
+	 */
+	private RenderPass vitrail$reopen(CommandEncoder encoder, IllegalArgumentException e) {
+		if (e.getMessage() == null || !e.getMessage().contains("size does not match")) {
+			return null;
+		}
+
+		Minecraft minecraft = Minecraft.getInstance();
+		RenderTarget main = minecraft == null ? null : minecraft.gameRenderer.mainRenderTarget();
+		if (main == null) {
+			return null;
+		}
+
+		RenderScale.repairSize(main, main.width, main.height);
+		GpuTextureView freshColour = main.getColorTextureView();
+		GpuTextureView freshDepth = main.useDepth ? main.getDepthTextureView() : null;
+		if (freshColour == null) {
+			return null;
+		}
+
+		Vitrail.logger().warn("The sky's colour and depth disagreed in size ({}), so the main "
+				+ "target was repaired and the sky opens again on it", e.getMessage());
+
+		try {
+			return GeometryHold.open(encoder, SkyDraw.descriptor(freshColour, freshDepth));
+		} catch (RuntimeException retry) {
+			Vitrail.logger().warn("The reopened sky failed too, so the first failure stands",
+					retry);
+
+			return null;
+		}
 	}
 
 	@WrapOperation(

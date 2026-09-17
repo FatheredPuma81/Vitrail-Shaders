@@ -22,9 +22,9 @@ what the next one holds.
   own scaler now stands down while such an upscaler resolves, the pack is drawn before it
   reconstructs, a main image whose textures disagree with its size is recreated at the head of
   the frame, and a redirect a skipped level render outlived is lowered before the interface.
-  Switching it off could also leave the main image half resized, a full-size colour beside the
-  small depth, which the first pass to name both threw on; the sky now draws unshaded for that
-  one frame while the image is repaired to the colour's size.
+  Switching it off or on again could also leave the main image half resized, a colour and
+  a depth at two different sizes, which the first sky to name both threw on; the sky is now
+  opened again on the repaired image, so the toggle frame draws without a glitch.
 
 - **SEUS PTGI HRR 3 is no longer set aside as soon as it loads.** Its anti-aliasing header carries
   a comment giving example settings for other platforms, and the engine read those examples as if
