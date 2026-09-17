@@ -15,6 +15,14 @@ what the next one holds.
 
 ### Fixed
 
+- **Swapping resource packs no longer loses the graphics device.** The material maps of the old
+  pack were closed the moment the new atlas stitched, while the card was still reading them a
+  couple of submissions behind, and the next wait surfaced that as a lost device between two
+  chunk passes. A replaced generation is now freed on the reload after next instead, which a
+  reload outlasts by hundreds of frames, at the cost of one spare set of maps; shutting the
+  client still hands everything back. Reloading a pack also ends the held geometry pass before
+  freeing what it writes, so nothing is released out from under a pass still recording.
+
 - **SEUS PTGI HRR 3 is no longer set aside as soon as it loads.** Its anti-aliasing header carries
   a comment giving example settings for other platforms, and the engine read those examples as if
   the pack had set them. It then took the code meant for those platforms as the code in use, left
