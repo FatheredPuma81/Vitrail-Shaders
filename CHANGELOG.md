@@ -15,6 +15,14 @@ what the next one holds.
 
 ### Fixed
 
+- **An external temporal upscaler no longer crashes the game while shaders draw.** A mod that
+  renders the world small and reconstructs it (DLSS or FSR3) disagreed with the engine about the
+  size of the main image: the interface went down with full-window scissors onto the small one,
+  and switching the upscaler off or reloading a pack left mismatched sizes behind. The engine's
+  own scaler now stands down while such an upscaler resolves, the pack is drawn before it
+  reconstructs, a main image whose textures disagree with its size is recreated at the head of
+  the frame, and a redirect a skipped level render outlived is lowered before the interface.
+
 - **SEUS PTGI HRR 3 is no longer set aside as soon as it loads.** Its anti-aliasing header carries
   a comment giving example settings for other platforms, and the engine read those examples as if
   the pack had set them. It then took the code meant for those platforms as the code in use, left

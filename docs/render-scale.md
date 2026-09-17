@@ -7,7 +7,10 @@ reaches, because a lot of a frame is not measured in pixels at all.
 
 Two things about it before anything else. At 100 percent it does not run: the world is drawn at
 the window's own size and the upscale is never even started. And it only engages while a pack is
-drawing, so with shaders off it changes nothing either.
+drawing, so with shaders off it changes nothing either. A third: it stands down while an external
+temporal upscaler (a mod rendering the world small and reconstructing it, DLSS or FSR3) resolves,
+because two scalers would scale each other's sizes; the pack then runs at the size that mod hands
+it and the interface still lands at the window's.
 
 ## What follows it
 
