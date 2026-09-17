@@ -35,6 +35,7 @@ import com.mojang.blaze3d.textures.FilterMode;
 import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTextureView;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.BindGroupLayouts;
 import net.minecraft.resources.Identifier;
 
@@ -135,6 +136,14 @@ final class PackPass {
 	 */
 	private final List<ColorTargets.PackSource> packSources;
 
+	/**
+	 * For each of {@link #samplers}, the game atlas a directive names, or null. Settled with the
+	 * plan like {@link #packSources}, but the view behind it is taken where the sampler is bound,
+	 * every frame: a resource reload stitches a new atlas under the same name, and a held view
+	 * would keep reading the deleted texture.
+	 */
+	private final List<Identifier> atlases;
+
 	private final List<String> storage;
 	private final List<LodRead> lodReads;
 
@@ -201,6 +210,7 @@ final class PackPass {
 		this.samplers = loaded.program().samplers().stream().map(TranslatedUnit.Uniform::name).toList();
 		this.samplerBindings = this.samplers.stream().map(loaded.samplers()::binding).toList();
 		List<ColorTargets.PackSource> sources = new ArrayList<>();
+		List<Identifier> atlases = new ArrayList<>();
 		for (int at = 0; at < this.samplers.size(); at++) {
 			SamplerPlan.Binding binding = this.samplerBindings.get(at);
 			// A name that took the default is looked up under colortex0 and not under itself: the
@@ -209,11 +219,18 @@ final class PackPass {
 			String named = binding.defaulted()
 					? TargetName.canonical(SamplerPlan.DEFAULT_TARGET)
 					: this.samplers.get(at);
-			sources.add(binding.kind() == SamplerPlan.Kind.PACK_TEXTURE
+			ColorTargets.PackSource source = binding.kind() == SamplerPlan.Kind.PACK_TEXTURE
 					? targets.packSource(this.textureStage, named)
+					: null;
+			sources.add(source);
+			// A directive naming one of the game's atlases carries no image, so the source above
+			// is null for it; the atlas behind the name is taken live at the binding instead.
+			atlases.add(binding.kind() == SamplerPlan.Kind.PACK_TEXTURE && source == null
+					? targets.atlasFor(this.textureStage, named).orElse(null)
 					: null);
 		}
 		this.packSources = Collections.unmodifiableList(sources);
+		this.atlases = Collections.unmodifiableList(atlases);
 		this.storage = loaded.storageBlocks().stream()
 				.distinct()
 				.filter(StorageBuffers::named)
@@ -627,7 +644,14 @@ final class PackPass {
 					? targets.surface(binding.index(), binding.side())
 					: null;
 
-			GpuTextureView bound = supplied != null ? supplied : switch (binding.kind()) {
+			// A directive naming one of the game's atlases is taken live off the texture
+			// manager, every bind, which is what the reference does: the atlas is stitched at
+			// runtime and is no file of any resource pack, so nothing was ever uploaded for it.
+			// Null before the first stitch and across a resource reload, and black meanwhile.
+			GpuTextureView live = binding.kind() == SamplerPlan.Kind.PACK_TEXTURE
+					&& supplied == null ? atlasView(this.atlases.get(at)) : null;
+
+			GpuTextureView bound = supplied != null ? supplied : live != null ? live : switch (binding.kind()) {
 				case COLORTEX -> surface == null ? null : surface.view();
 				// White where no image is there, and white is the far plane rather than a
 				// placeholder: what a depth lookup reads is now an image already in the pack's own
@@ -707,7 +731,14 @@ final class PackPass {
 			//
 			// A custom image is the image's own answer and not this pass's, which is why it is
 			// asked of one place rather than decided here: see customImageFilter.
-			FilterMode filter = supplied != null ? source.filter() : switch (binding.kind()) {
+			//
+			// A live atlas is LINEAR, like the noise: it is a continuous field the pack
+			// interpolates texels out of, and the game filters it that way. A pack reading one
+			// through explicit lods climbs the chain the game filled, so the sampler goes past
+			// level nought where an ordinary custom texture stops there.
+			FilterMode filter = supplied != null ? source.filter()
+					: live != null ? FilterMode.LINEAR
+					: switch (binding.kind()) {
 				case COLORTEX -> targets.filter(binding.index());
 				case NOISE, SHADOW_COLOUR -> FilterMode.LINEAR;
 				case SHADOW_DEPTH -> targets.shadow()
@@ -741,8 +772,8 @@ final class PackPass {
 			boolean mipmaps = binding.kind() == SamplerPlan.Kind.SHADOW_DEPTH
 					? targets.shadow().depthMipmapped(
 							this.loaded.samplers().withoutTranslucents(binding.sampler()))
-					: surface != null && surface.chainWritten()
-							&& this.lodTargets.contains(binding.index());
+					: live != null || (surface != null && surface.chainWritten()
+							&& this.lodTargets.contains(binding.index()));
 
 			// The noise image repeats and everything else clamps, which is Iris's choice and not a
 			// taste: a pack indexes noisetex with coordinates of its own, in texels and well past
@@ -753,7 +784,36 @@ final class PackPass {
 			pass.bindTexture(sampler, bound == null ? targets.black() : bound,
 					supplied != null
 							? sampler(source.repeat(), filter, false)
-							: sampler(binding.kind(), filter, mipmaps));
+							: live != null
+									? sampler(false, filter, true)
+									: sampler(binding.kind(), filter, mipmaps));
+		}
+	}
+
+	/**
+	 * The game's live view of a stitched atlas, or null before the first stitch and across a
+	 * resource reload. Re-asked at every bind rather than held, because the manager hands out a
+	 * new texture on every stitch and a held view would keep reading the deleted one; that is the
+	 * reference's own reason ({@code CustomTextureManager}).
+	 * <p>
+	 * Caught rather than tested: a texture registered for the next reload holds no view until
+	 * that reload applies one, and the getter answers that with a throw. A name that reads black
+	 * for a frame is not worth a crash.
+	 */
+	private static GpuTextureView atlasView(Identifier atlas) {
+		if (atlas == null) {
+			return null;
+		}
+
+		Minecraft client = Minecraft.getInstance();
+		if (client == null) {
+			return null;
+		}
+
+		try {
+			return client.getAtlasManager().getAtlasOrThrow(atlas).getTextureView();
+		} catch (RuntimeException absent) {
+			return null;
 		}
 	}
 

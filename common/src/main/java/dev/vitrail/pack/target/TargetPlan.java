@@ -414,12 +414,12 @@ public final class TargetPlan {
 	 * wrote that target, and writing a target is what allocates it.
 	 */
 	private static Set<String> suppliedTo(PackTextures textures, String program) {
-		return TextureStage.of(program).map(textures::suppliedTo).orElse(Set.of());
+		return TextureStage.of(program).map(one -> textures.suppliedTo(one, program)).orElse(Set.of());
 	}
 
 	/** The ones of those the default sampler can stand on, which is where the target is decided. */
 	private static Set<String> picturesTo(PackTextures textures, String program) {
-		return TextureStage.of(program).map(textures::picturesTo).orElse(Set.of());
+		return TextureStage.of(program).map(one -> textures.picturesTo(one, program)).orElse(Set.of());
 	}
 
 	/**

@@ -15,6 +15,7 @@ import dev.vitrail.uniform.NoiseTexture;
 import com.mojang.blaze3d.GpuFormat;
 
 import net.minecraft.client.Minecraft;
+import net.minecraft.data.AtlasIds;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.packs.resources.Resource;
 
@@ -259,12 +260,19 @@ final class PackImages {
 	 * ask, and reading a pack has to keep working there.
 	 * <p>
 	 * Read once here, where Iris re-asks the texture manager at every bind, so a resource pack
-	 * swapped under a running client is not followed until the shader pack is read again. Two cases
-	 * Iris serves this cannot serve at all, and both are named rather than given something
-	 * plausible. An ATLAS, which is stitched at runtime and is no file of any resource pack. And a
-	 * normal or specular map reached from a texture NAME, which is a different door from the one
-	 * {@link PbrAtlases} opens: the maps that follow the atlases are built there, off the sprites
-	 * the game stitched, where this method is asked for a path a pack wrote in its own properties.
+	 * swapped under a running client is not followed until the shader pack is read again. One case
+	 * Iris serves this cannot serve at all, and it is named rather than given something
+	 * plausible: a normal or specular map reached from a texture NAME, which is a different door
+	 * from the one {@link PbrAtlases} opens: the maps that follow the atlases are built there, off
+	 * the sprites the game stitched, where this method is asked for a path a pack wrote in its own
+	 * properties.
+	 * <p>
+	 * An ATLAS is the other case the old paragraph named, and it no longer is one: a path of the
+	 * form {@code minecraft:textures/atlas/<stem>.png} is looked up under {@link #atlasFor} and
+	 * bound live off the texture manager every frame, which is what the reference does
+	 * ({@code CustomTextureManager}, asking for the registered texture rather than for a file).
+	 * A stitched atlas is no file of any resource pack, so asking the resource manager for one
+	 * was always a miss.
 	 */
 	private static Image gameResource(PackTexture texture, List<String> notes) {
 		String path = texture.path();
@@ -287,6 +295,15 @@ final class PackImages {
 
 		Optional<Resource> resource = client.getResourceManager().getResource(location);
 		if (resource.isEmpty()) {
+			if (atlasLocation(path).isPresent()) {
+				// Said once, when the pack is read; the binding itself is settled every frame
+				// where the atlas is asked for, so this line must not promise pixels.
+				notes.add(path + " is stitched at runtime and is no file of any resource pack, "
+						+ "so " + texture.sampler() + " reads the live atlas");
+
+				return null;
+			}
+
 			notes.add(path + " is not a file any loaded resource pack ships, so " + texture.sampler()
 					+ " reads one black pixel");
 
@@ -318,6 +335,65 @@ final class PackImages {
 	/** Every image that was read, in the order the pack declared them. */
 	List<Image> images() {
 		return this.images;
+	}
+
+	/**
+	 * The game atlases a pack may name, by the stem of their file: {@code blocks} in
+	 * {@code minecraft:textures/atlas/blocks.png} is the atlas the client stitches the terrain
+	 * into, and so on through every atlas it keeps. The texture manager holds them under exactly
+	 * these names, which is what makes a path no resource pack ships still resolve.
+	 */
+	private static final Map<String, Identifier> ATLASES = Map.ofEntries(
+			Map.entry("blocks", AtlasIds.BLOCKS),
+			Map.entry("items", AtlasIds.ITEMS),
+			Map.entry("armor_trims", AtlasIds.ARMOR_TRIMS),
+			Map.entry("banner_patterns", AtlasIds.BANNER_PATTERNS),
+			Map.entry("chests", AtlasIds.CHESTS),
+			Map.entry("decorated_pot", AtlasIds.DECORATED_POT),
+			Map.entry("gui", AtlasIds.GUI),
+			Map.entry("map_decorations", AtlasIds.MAP_DECORATIONS),
+			Map.entry("paintings", AtlasIds.PAINTINGS),
+			Map.entry("particles", AtlasIds.PARTICLES),
+			Map.entry("shield_patterns", AtlasIds.SHIELD_PATTERNS),
+			Map.entry("shulker_boxes", AtlasIds.SHULKER_BOXES),
+			Map.entry("celestials", AtlasIds.CELESTIALS));
+
+	/**
+	 * The atlas a game-resource path names, or empty when it names anything else. Pure path
+	 * matching: whether the client has stitched anything yet is asked where the view is taken,
+	 * every frame, and not here, once, when the pack is read.
+	 */
+	static Optional<Identifier> atlasLocation(String path) {
+		String[] parts = path.split(":", 0);
+		if (parts.length < 2 || !parts[0].equals("minecraft")) {
+			return Optional.empty();
+		}
+
+		String file = parts[1];
+		String directory = "textures/atlas/";
+		String extension = ".png";
+		if (!file.startsWith(directory) || !file.endsWith(extension)) {
+			return Optional.empty();
+		}
+
+		return Optional.ofNullable(ATLASES.get(
+				file.substring(directory.length(), file.length() - extension.length())));
+	}
+
+	/**
+	 * The live atlas a sampler reads when its directive names one, empty when it names anything
+	 * else. A forged name is never one: volumes answer under those, and a volume declaration over
+	 * an atlas path would spread stitched terrain over a lookup table.
+	 */
+	Optional<Identifier> atlasFor(TextureStage stage, String sampler) {
+		String name = SamplerPlan.behind(sampler);
+		if (!name.equals(sampler) || stage == null) {
+			return Optional.empty();
+		}
+
+		return this.declared.resolve(stage, name)
+				.filter(PackTexture::gameResource)
+				.flatMap(texture -> atlasLocation(texture.path()));
 	}
 
 	/**

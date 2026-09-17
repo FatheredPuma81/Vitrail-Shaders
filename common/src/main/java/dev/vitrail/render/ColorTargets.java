@@ -28,6 +28,7 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.FilterMode;
 import com.mojang.blaze3d.textures.GpuTexture;
 import com.mojang.blaze3d.textures.GpuTextureView;
+import net.minecraft.resources.Identifier;
 import org.joml.Vector4f;
 import org.joml.Vector4fc;
 
@@ -1249,6 +1250,16 @@ final class ColorTargets {
 		TargetSurface surface = this.packSurfaces.get(image);
 
 		return surface == null ? null : surface.view();
+	}
+
+	/**
+	 * The live atlas a sampler reads when its directive names one of the game's, empty when it
+	 * names anything else. Answered from the directives, not from pixels: the view itself is
+	 * taken where the sampler is bound, every frame, because a resource reload stitches a new
+	 * atlas under the same name.
+	 */
+	Optional<Identifier> atlasFor(TextureStage stage, String sampler) {
+		return this.packImages.atlasFor(stage, sampler);
 	}
 
 	/**

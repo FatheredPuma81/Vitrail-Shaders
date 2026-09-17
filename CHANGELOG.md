@@ -15,6 +15,18 @@ what the next one holds.
 
 ### Fixed
 
+- **Shader packs that sample the block atlas through a renamed sampler see the atlas again.**
+  A custom texture naming `minecraft:textures/atlas/blocks.png` is stitched at runtime and is no
+  file of any resource pack, so the sampler read one black pixel and SEUS PTGI's reflections read
+  darkness. It now reads the live atlas, asked for at every bind the way the reference asks, so a
+  resource reload stitches a new one under the same name without leaving the pack behind.
+- **SEUS PTGI E12 draws its world instead of lighting it nearly black.** The pack lays its caustics
+  over `colortex0` for the deferred stage, and its ninth deferred pass reads the caustics pattern
+  through the name while its tenth unpacks the scene's albedo, normals and lightmap out of it. One
+  binding cannot serve both reads, and the albedo one is the load bearing one, so the override now
+  holds for the program the qualifier names and the numbered passes read the colour target again.
+  A `texture.composite.colortex0` override is narrowed the same way, so the final reads what the
+  composites wrote rather than what one of them sampled.
 - **SEUS PTGI HRR 3 is no longer set aside as soon as it loads.** Its anti-aliasing header carries
   a comment giving example settings for other platforms, and the engine read those examples as if
   the pack had set them. It then took the code meant for those platforms as the code in use, left

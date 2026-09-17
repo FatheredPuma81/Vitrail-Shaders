@@ -548,6 +548,46 @@ public final class PackTextures {
 	}
 
 	/**
+	 * Every name the pack takes over in one program of that stage, which is narrower than
+	 * {@link #suppliedTo(TextureStage)} by exactly one name in two stages: {@code colortex0} is
+	 * answered for the bare program alone, and every numbered program reads the colour target.
+	 * <p>
+	 * A stage qualifier names the stage, and the reference hands the override to every program of
+	 * it. That is right for every name but the one the geometry stage just wrote: SEUS PTGI E12
+	 * lays {@code textures/Caustics.png} over {@code colortex0} for the deferred stage, and its
+	 * {@code deferred9} reads the caustics pattern through it while its {@code deferred10} unpacks
+	 * the scene's albedo, normals and lightmap out of the same name. One binding cannot serve both
+	 * reads, and the albedo one is the load bearing one: with the pattern behind the name the
+	 * whole world lights nearly black. The pack's own evolution says the same: HRR 3 moves its
+	 * caustics to {@code colortex10}, a target nothing unpacks, rather than fight over
+	 * {@code colortex0}. So in the deferred and composite stages the name that carries the
+	 * scene's albedo stays the scene's except in the program the qualifier names exactly, and
+	 * {@code final} reads what the composites wrote rather than what one of them sampled.
+	 * <p>
+	 * Only {@code colortex0} is narrowed, both spellings of it. A lookup table over any other
+	 * target is read as a table by every program of the stage: E12's own
+	 * {@code texture.composite.colortex4} feeds {@code GetCausticsComposite} in
+	 * {@code composite} through {@code composite4}, and narrowing it would take the caustics off
+	 * the water to fix nothing.
+	 */
+	public Set<String> suppliedTo(TextureStage stage, String program) {
+		Set<String> names = suppliedTo(stage);
+		if ((stage == TextureStage.DEFERRED || stage == TextureStage.COMPOSITE)
+				&& !program.equals(stage.name().toLowerCase(Locale.ROOT))) {
+			names.removeIf(name -> TargetName.index(name).orElse(-1) == 0);
+			// A stage-less customTexture.NAME binds by name on the reference, in every program,
+			// so one spelled colortex0 keeps its binding; only the stage qualifier is narrowed.
+			this.named.forEach((sampler, texture) -> {
+				if (!volume(texture) && TargetName.index(sampler).orElse(-1) == 0) {
+					names.add(sampler);
+				}
+			});
+		}
+
+		return names;
+	}
+
+	/**
 	 * The names of that stage a flat picture stands on, which are the ones a program's DEFAULT
 	 * sampler can land on rather than on the colour target.
 	 * <p>
@@ -568,6 +608,22 @@ public final class PackTextures {
 				names.addAll(spellings(sampler));
 			}
 		});
+
+		return names;
+	}
+
+	/**
+	 * The names of that stage a flat picture stands on for one program, narrowed exactly where
+	 * {@link #suppliedTo(TextureStage, String)} is: a default sampler landing on
+	 * {@code colortex0} in a numbered deferred or composite reads the colour target, not whatever
+	 * picture the qualifier lays over the bare program's name.
+	 */
+	public Set<String> picturesTo(TextureStage stage, String program) {
+		Set<String> names = picturesTo(stage);
+		if ((stage == TextureStage.DEFERRED || stage == TextureStage.COMPOSITE)
+				&& !program.equals(stage.name().toLowerCase(Locale.ROOT))) {
+			names.removeIf(name -> TargetName.index(name).orElse(-1) == 0);
+		}
 
 		return names;
 	}

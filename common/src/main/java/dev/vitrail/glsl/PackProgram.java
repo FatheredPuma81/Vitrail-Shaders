@@ -1708,13 +1708,15 @@ public final class PackProgram {
 			ProgramTranslator.TranslatedProgram program, TargetPlan targets, AlphaTest alphaTest,
 			PackTextures textures) {
 		// The stage of the program the pass draws, which is what narrows a texture.STAGE.NAME
-		// override to the half of the frame the pack meant it for.
+		// override to the half of the frame the pack meant it for. The program goes along too:
+		// colortex0 keeps the scene's albedo everywhere but in the program the qualifier names.
 		Optional<TextureStage> stage = TextureStage.of(programOf(path));
-		Set<String> supplied = stage.map(textures::suppliedTo).orElse(Set.of());
+		String bare = programOf(path);
+		Set<String> supplied = stage.map(one -> textures.suppliedTo(one, bare)).orElse(Set.of());
 
 		return new Loaded(packName, path, program, targets,
 				SamplerPlan.of(declaredIn(program), typesIn(program), targets, path, supplied,
-						stage.map(textures::picturesTo).orElse(Set.of())),
+						stage.map(one -> textures.picturesTo(one, bare)).orElse(Set.of())),
 				alphaTest, supplied);
 	}
 

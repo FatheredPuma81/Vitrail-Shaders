@@ -8,8 +8,12 @@ import java.util.Optional;
  * <p>
  * There are seven names and nine families, because two of the names cover two families each:
  * {@code gbuffers} covers the shadow passes as well, and {@code composite} covers the final. That
- * is not a shorthand a reader may undo. A pack overriding {@code colortex3} for
- * {@code composite} means it for the final too, and Iris hands both renderers the one map.
+ * is not a shorthand a reader may undo, with one exception: a pack overriding {@code colortex0}
+ * for {@code deferred} or {@code composite} means it for the bare program alone, and a numbered
+ * program reads the colour target. The reference hands the override to every program of the
+ * stage, and SEUS PTGI E12 proves that wrong: its {@code deferred9} reads the caustics pattern
+ * through the name while its {@code deferred10} unpacks the scene's albedo out of it, and one
+ * binding cannot serve both. See {@code PackTextures.suppliedTo(TextureStage, String)}.
  * <p>
  * A name outside the seven is a line this engine drops with a word in the log rather than a
  * stage it invents: the set is closed in Iris and in OptiFine both, and a pack writing
