@@ -493,7 +493,7 @@ public final class RenderScale {
 	}
 
 	/**
-	 * Recreates the main target's textures where they disagree with its own fields, which is a
+	 * Recreates the main target's textures where they disagree with a size, which is a
 	 * target no resize ever built: the fields say one size and the images another, and the first
 	 * pass that names both - a scissor, an attachment check - throws on it.
 	 * <p>
@@ -503,20 +503,24 @@ public final class RenderScale {
 	 * still installed ({@code Depth texture: size does not match expected attachment size}).
 	 * Neither this class's swap (which it restores itself) nor the game's own resize check (which
 	 * compares the window against the fields, already correct) repairs that pair, so it is
-	 * repaired here, at the head of the frame, outside any pass, before anything reads either
-	 * half. On every ordinary frame the sizes agree and this is one cheap comparison.
+	 * repaired here, outside any pass, before anything reads either half. On every ordinary
+	 * frame the sizes agree and this is one cheap comparison.
+	 * <p>
+	 * The size is a parameter rather than the fields because the head of the frame is not the
+	 * only place a half resize is met: a pass opening mid-frame names the size it really runs
+	 * at in its own colour, and repairing to that is what lets it open.
 	 */
-	private static void healTargetSize(RenderTarget main) {
-		if (main == null || main.width <= 0 || main.height <= 0) {
+	public static void repairSize(RenderTarget main, int width, int height) {
+		if (main == null || width <= 0 || height <= 0) {
 			return;
 		}
 
 		GpuTexture colour = main.getColorTexture();
 		GpuTexture depth = main.getDepthTexture();
 		boolean colourOk = colour == null
-				|| (colour.getWidth(0) == main.width && colour.getHeight(0) == main.height);
+				|| (colour.getWidth(0) == width && colour.getHeight(0) == height);
 		boolean depthOk = depth == null
-				|| (depth.getWidth(0) == main.width && depth.getHeight(0) == main.height);
+				|| (depth.getWidth(0) == width && depth.getHeight(0) == height);
 		if (colourOk && depthOk) {
 			return;
 		}
@@ -528,9 +532,49 @@ public final class RenderScale {
 				? "none"
 				: depth.getWidth(0) + "x" + depth.getHeight(0);
 		Vitrail.logger().warn("The main target's textures (colour {}, depth {}) disagree "
-				+ "with its size {}x{}, so they are recreated before the frame reads them",
-				colourSize, depthSize, main.width, main.height);
-		main.resize(main.width, main.height);
+				+ "with its size {}x{}, so they are recreated before anything reads them",
+				colourSize, depthSize, width, height);
+		main.resize(width, height);
+	}
+
+	/**
+	 * The head-of-frame half of {@link #repairSize}: the target's own fields are the size its
+	 * textures are held to, outside any pass, before anything reads either half.
+	 */
+	private static void healTargetSize(RenderTarget main) {
+		if (main == null) {
+			return;
+		}
+
+		repairSize(main, main.width, main.height);
+	}
+
+	/**
+	 * Repairs the main target to the size of the colour view a pass is about to open with,
+	 * and hands back the fresh views to open it on.
+	 * <p>
+	 * The frame that stops an external temporal upscaler resolving can hand a pass a full-size
+	 * colour beside the small depth the upscaler's target still has installed, and the pass
+	 * creation throws on the pair. Repairing the target and opening the game's own pass on
+	 * the fresh views turns that frame's crash into one unshaded pass; the pack is warming
+	 * on exactly these frames and misses nothing.
+	 *
+	 * @return the fresh colour and depth views, or null where there is nothing to repair to
+	 */
+	public static GpuTextureView[] repairViews(GpuTextureView colour) {
+		Minecraft minecraft = Minecraft.getInstance();
+		RenderTarget main = minecraft == null ? null : minecraft.gameRenderer.mainRenderTarget();
+		if (main == null || colour == null || colour.texture() == null) {
+			return null;
+		}
+
+		GpuTexture source = colour.texture();
+		repairSize(main, source.getWidth(0), source.getHeight(0));
+		if (main.getColorTextureView() == null || main.getDepthTextureView() == null) {
+			return null;
+		}
+
+		return new GpuTextureView[] {main.getColorTextureView(), main.getDepthTextureView()};
 	}
 
 	/** Whether this frame will render a world, told by the head of {@code render}. */

@@ -1,6 +1,7 @@
 package dev.vitrail.mixin;
 
 import dev.vitrail.render.GeometryHold;
+import dev.vitrail.render.RenderScale;
 import dev.vitrail.render.SkyDraw;
 
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
@@ -14,6 +15,7 @@ import net.minecraft.client.renderer.DynamicUniforms;
 import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderPassDescriptor;
 import com.mojang.blaze3d.textures.GpuSampler;
+import com.mojang.blaze3d.textures.GpuTexture;
 import com.mojang.blaze3d.textures.GpuTextureView;
 import net.minecraft.client.renderer.SkyRenderer;
 import net.minecraft.world.level.MoonPhase;
@@ -195,6 +197,23 @@ public abstract class SkyRendererMixin {
 		return original.call(uniforms, modelView);
 	}
 
+	/**
+	 * Whether the two views a sky pass is about to open with disagree in size, which is what
+	 * the pass creation throws on. A view without an image cannot disagree and answers false.
+	 */
+	private static boolean mismatched(GpuTextureView colour, GpuTextureView depth) {
+		if (colour == null || colour.texture() == null || depth == null
+				|| depth.texture() == null) {
+			return false;
+		}
+
+		GpuTexture colourImage = colour.texture();
+		GpuTexture depthImage = depth.texture();
+
+		return colourImage.getWidth(0) != depthImage.getWidth(0)
+				|| colourImage.getHeight(0) != depthImage.getHeight(0);
+	}
+
 	@WrapOperation(
 			method = {"renderSkyDisc", "renderDarkDisc", "renderStars", "renderSunriseAndSunset", "renderSun",
 					"renderMoon", "renderEndSky", "renderEndFlash"},
@@ -210,6 +229,21 @@ public abstract class SkyRendererMixin {
 	private RenderPass vitrail$open(CommandEncoder encoder, Supplier<String> label,
 			GpuTextureView colour, Optional<?> clearColour, GpuTextureView depth,
 			OptionalDouble clearDepth, Operation<RenderPass> original) {
+		// A half-resized main target never reaches the pack: the frame that stops an
+		// external temporal upscaler resolving can hand the sky a full-size colour with
+		// the small depth still installed, and the pass creation throws on the pair.
+		// That one sky draws unshaded while the target is repaired to the colour's
+		// size, and the game opens its own pass on the fresh views.
+		if (mismatched(colour, depth)) {
+			GpuTextureView[] repaired = RenderScale.repairViews(colour);
+			if (repaired != null) {
+				this.vitrail$pipeline = null;
+
+				return original.call(encoder, label, repaired[0], clearColour, repaired[1],
+						clearDepth);
+			}
+		}
+
 		this.vitrail$pipeline = SkyDraw.element(label.get(), this.vitrail$modelView,
 				this.vitrail$colour);
 		RenderPassDescriptor descriptor = this.vitrail$pipeline == null
