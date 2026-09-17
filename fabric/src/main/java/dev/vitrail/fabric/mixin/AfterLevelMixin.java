@@ -17,8 +17,18 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * posted from this exact line. Here it is the line itself: injected after the call rather than at
  * the return of the method, because the hand, the screen effects and the crosshair are all drawn
  * further down and the chain has to be under them.
+ * <p>
+ * Ordering vs the Upscaled mod (external DLSS/FSR3, default mixin priority 1000): Upscaled
+ * injects its {@code upscaleWorldBeforeHand} evaluate at this same AFTER-
+ * {@code LevelRenderer.render} point. This handler asks for priority 900 so the pack composites
+ * while {@code mainRenderTarget()} still resolves to the low-res world target and DLSS then
+ * upscales the composited image (tonemap-before-SR is not NVIDIA-ideal, but it is crash-free and
+ * keeps any Swapper neural-rendering final stage operating on the shader image). Even if the
+ * order ever inverts, {@link dev.vitrail.render.RenderScale} stands down while an external
+ * upscaler is active, so the main target's fields stay window-sized and the GUI scissor that
+ * used to crash (full-window rect on a DLSS-sized area) stays valid.
  */
-@Mixin(GameRenderer.class)
+@Mixin(value = GameRenderer.class, priority = 900)
 public abstract class AfterLevelMixin {
 
 	@Inject(method = "renderLevel",

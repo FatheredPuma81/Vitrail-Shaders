@@ -488,6 +488,49 @@ public final class RenderScale {
 		if (swapped && main != null) {
 			restore(main);
 		}
+
+		healTargetSize(main);
+	}
+
+	/**
+	 * Recreates the main target's textures where they disagree with its own fields, which is a
+	 * target no resize ever built: the fields say one size and the images another, and the first
+	 * pass that names both - a scissor, an attachment check - throws on it.
+	 * <p>
+	 * The observed road is an external temporal upscaler being switched off mid-session: while it
+	 * resolves, the world renders into its own low-res target, and the frame that stops resolving
+	 * can reach the sky with the window's numbers in the fields and the upscaler's small depth
+	 * still installed ({@code Depth texture: size does not match expected attachment size}).
+	 * Neither this class's swap (which it restores itself) nor the game's own resize check (which
+	 * compares the window against the fields, already correct) repairs that pair, so it is
+	 * repaired here, at the head of the frame, outside any pass, before anything reads either
+	 * half. On every ordinary frame the sizes agree and this is one cheap comparison.
+	 */
+	private static void healTargetSize(RenderTarget main) {
+		if (main == null || main.width <= 0 || main.height <= 0) {
+			return;
+		}
+
+		GpuTexture colour = main.getColorTexture();
+		GpuTexture depth = main.getDepthTexture();
+		boolean colourOk = colour == null
+				|| (colour.getWidth(0) == main.width && colour.getHeight(0) == main.height);
+		boolean depthOk = depth == null
+				|| (depth.getWidth(0) == main.width && depth.getHeight(0) == main.height);
+		if (colourOk && depthOk) {
+			return;
+		}
+
+		String colourSize = colour == null
+				? "none"
+				: colour.getWidth(0) + "x" + colour.getHeight(0);
+		String depthSize = depth == null
+				? "none"
+				: depth.getWidth(0) + "x" + depth.getHeight(0);
+		Vitrail.logger().warn("The main target's textures (colour {}, depth {}) disagree "
+				+ "with its size {}x{}, so they are recreated before the frame reads them",
+				colourSize, depthSize, main.width, main.height);
+		main.resize(main.width, main.height);
 	}
 
 	/** Whether this frame will render a world, told by the head of {@code render}. */
@@ -509,6 +552,19 @@ public final class RenderScale {
 	 */
 	public static boolean beginWorld(RenderTarget main) {
 		if (main == null) {
+			return false;
+		}
+
+		// An external temporal upscaler (Upscaled DLSS/FSR3) owns the main target's size this
+		// frame: it renders the world low-res and resolves inside renderLevel. Engaging our own
+		// swap on top would double-scale (our percent of its render size) and leave the pack,
+		// the outline and the GUI disagreeing about the frame's size: the observed crash is a
+		// full-window GUI scissor on a DLSS-sized render area. Stand down and let the whole
+		// pack run at the hijacked render size; our composite then lands pre-SR and DLSS (plus
+		// any Swapper neural-rendering final stage) operates on the shader image.
+		if (ExternalUpscaler.isActive()) {
+			standDown(main);
+
 			return false;
 		}
 

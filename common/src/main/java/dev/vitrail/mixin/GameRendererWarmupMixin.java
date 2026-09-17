@@ -1,5 +1,6 @@
 package dev.vitrail.mixin;
 
+import dev.vitrail.render.ExternalUpscaler;
 import dev.vitrail.render.PackChain;
 
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
@@ -36,6 +37,11 @@ public abstract class GameRendererWarmupMixin {
 		// format of this frame was settled from the pack that has just been replaced.
 		if (PackChain.beforeLevel() || PackChain.warming()) {
 			PackChain.pumpWarmup();
+			// The skipped call is what an external temporal upscaler ends its low-res world
+			// redirect past: its evaluate sits after the level render this branch never runs,
+			// so without this the hand and the interface that follow render into the small
+			// target. Lowered here, the warmup frame draws its interface at full size.
+			ExternalUpscaler.releaseWorldRedirect(renderer);
 			return;
 		}
 
