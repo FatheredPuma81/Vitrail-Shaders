@@ -64,6 +64,16 @@ public final class PbrAtlases {
 	 */
 	private static final Map<Identifier, PbrAtlas> ATLASES = new HashMap<>();
 
+	/**
+	 * The generation before the live one, per atlas, freed on the reload after next rather than
+	 * in the stitch that replaced it. The stitch lands mid-session while the GPU still holds up
+	 * to two submissions reading these views, and closing under them is a lost device at the next
+	 * semaphore wait. A reload takes hundreds of frames to finish, so holding one replaced
+	 * generation across it is drain enough, and it bounds the cost to one spare set of maps:
+	 * {@link PbrTextures} already meets reloads the same way, by name rather than by hook.
+	 */
+	private static final Map<Identifier, PbrAtlas> RETIRED = new HashMap<>();
+
 	/** The one convention this engine knows a symbol and a reduction for. */
 	private static final String LAB_PBR = "lab-pbr";
 
@@ -113,7 +123,10 @@ public final class PbrAtlases {
 
 		PbrAtlas previous = ATLASES.remove(atlas);
 		if (previous != null) {
-			previous.close();
+			PbrAtlas retired = RETIRED.put(atlas, previous);
+			if (retired != null) {
+				retired.close();
+			}
 		}
 
 		try {
@@ -205,6 +218,8 @@ public final class PbrAtlases {
 	public static void close() {
 		ATLASES.values().forEach(PbrAtlas::close);
 		ATLASES.clear();
+		RETIRED.values().forEach(PbrAtlas::close);
+		RETIRED.clear();
 	}
 
 	/**

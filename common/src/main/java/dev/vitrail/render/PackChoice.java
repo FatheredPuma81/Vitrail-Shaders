@@ -1102,6 +1102,11 @@ public final class PackChoice {
 		// tried again without leaving the game.
 		PackChain previous = PackChain.takeDown();
 
+		// The held geometry pass ends before anything it writes is freed: release closes the
+		// colour targets out from under a pass still recording, and the next foreign pass then
+		// closes a poisoned hold on its way through. Harmless where nothing is held.
+		GeometryHold.flush(() -> "a pack being reloaded");
+
 		if (previous != null) {
 			// Guarded like the same call in leaveWorld, and the three lines below are why this road
 			// needs it more than that one: the load and both settle() calls stand after it, and a
