@@ -13,9 +13,12 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * What one dimension of a pack says about its colour targets: the format each one wants, whether
@@ -125,7 +128,101 @@ public final class TargetDirectives {
 				apply(program, line, directive, split.get(), fragment.isLive(line));
 			}
 
+			acceptLodReads(program, fragment);
+
 			return this;
+		}
+
+		/**
+		 * A lod the pack reads without declaring {@code colortexNMipmapEnabled} for it, which
+		 * still needs the chain filled before its reader: the reference this engine follows
+		 * fills it, and a pack written before the directive existed reads as if it had declared
+		 * it. SEUS PTGI E12's exposure averages the coarsest level of {@code colortex3} without
+		 * declaring the chain, and reading level nought for it exposes the whole frame for one
+		 * texel.
+		 * <p>
+		 * Only an explicit level that is not statically nought counts: level nought is the image
+		 * itself and needs no chain. Only colour targets count, which is what
+		 * {@link TargetName#index} answers for; a shadow or noise name never reaches the set.
+		 * Whether the program binds the name to the target is asked where the set is read, so a
+		 * lookup table behind the same name costs nothing here.
+		 */
+		private static final Pattern LOD_READ =
+				Pattern.compile("texture(2D)?Lod\\s*\\(");
+
+		private void acceptLodReads(String program, IncludeExpander.ExpandedUnit fragment) {
+			List<String> lines = fragment.lines();
+			int offset = 0;
+			int[] starts = new int[lines.size()];
+			for (int line = 0; line < lines.size(); line++) {
+				starts[line] = offset;
+				offset += lines.get(line).length() + 1;
+			}
+
+			String text = String.join("\n", lines);
+			Matcher calls = LOD_READ.matcher(text);
+			while (calls.find()) {
+				int line = lineOf(starts, calls.start());
+				if (!fragment.isLive(line)) {
+					continue;
+				}
+
+				List<String> args = topLevelArgs(text, calls.end());
+				if (args.size() < 3 || isZeroLod(args.get(2))) {
+					continue;
+				}
+
+				OptionalInt index = TargetName.index(args.get(0).trim());
+				if (index.isEmpty()) {
+					continue;
+				}
+
+				this.mipmapRequests.computeIfAbsent(bareName(program), _ -> new TreeSet<>())
+						.add(index.getAsInt());
+			}
+		}
+
+		/** The line a match offset sits on, from the table the caller built. */
+		private static int lineOf(int[] starts, int offset) {
+			int line = starts.length - 1;
+			while (line > 0 && starts[line] > offset) {
+				line--;
+			}
+
+			return line;
+		}
+
+		/** The comma separated arguments of a call whose opening bracket has just been read. */
+		private static List<String> topLevelArgs(String text, int open) {
+			List<String> args = new ArrayList<>();
+			int depth = 1;
+			int start = open;
+			for (int at = open; at < text.length() && depth > 0; at++) {
+				char c = text.charAt(at);
+				if (c == '(' || c == '[') {
+					depth++;
+				} else if (c == ')' || c == ']') {
+					depth--;
+					if (depth == 0) {
+						args.add(text.substring(start, at));
+					}
+				} else if (c == ',' && depth == 1) {
+					args.add(text.substring(start, at));
+					start = at + 1;
+				}
+			}
+
+			return args;
+		}
+
+		/** Whether a level argument is statically nought, paint and suffixes stripped. */
+		private static boolean isZeroLod(String lod) {
+			String level = lod.trim();
+			while (level.startsWith("(") && level.endsWith(")")) {
+				level = level.substring(1, level.length() - 1).trim();
+			}
+
+			return level.matches("0(\\.0*)?([uUlLfF]*)?");
 		}
 
 		public Builder accept(ShaderProperties properties, Map<String, String> defines) {

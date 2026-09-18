@@ -15,6 +15,12 @@ what the next one holds.
 
 ### Fixed
 
+- **A colour target read at an explicit level is read at that level.** A pack sampling a mip
+  without declaring the chain for it had its level pinned to nought, and SEUS PTGI E12's exposure
+  averaged a single texel of `colortex3` instead of the frame: looking at a dark block blew the
+  sky white, and a dark texel underexposed the world. A static lod read now fills the chain
+  before its reader, as the reference fills it, and keeps its level to it.
+
 - **SEUS PTGI HRR 3 is no longer set aside as soon as it loads.** Its anti-aliasing header carries
   a comment giving example settings for other platforms, and the engine read those examples as if
   the pack had set them. It then took the code meant for those platforms as the code in use, left

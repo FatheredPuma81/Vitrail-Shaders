@@ -3291,14 +3291,95 @@ public final class GlslTranslator {
 		}
 
 		Set<String> chained = new HashSet<>();
+		Set<Integer> derived = staticLodTargets();
 		for (String name : this.samplers.keySet()) {
 			OptionalInt index = TargetName.index(name);
-			if (index.isPresent() && targets.contains(index.getAsInt())) {
+			if (index.isPresent() && (targets.contains(index.getAsInt())
+					|| derived.contains(index.getAsInt()))) {
 				chained.add(name);
 			}
 		}
 
 		return chained;
+	}
+
+	/**
+	 * Colour targets read at an explicit level that is not statically nought, whether or not the
+	 * pack declared a chain for them. The reference fills those chains, and a pack written before
+	 * {@code colortexNMipmapEnabled} existed reads as if it had declared them; without the
+	 * exemption the pin below overwrites the level with nought, and SEUS PTGI E12's exposure
+	 * averages one texel. {@code TargetDirectives} fills the chain for the same readers; this set
+	 * is what lets their level survive to it.
+	 * <p>
+	 * Read off the tokens with no liveness, where the directives above are live lines only: a
+	 * dead branch over-asking here unpins a level the fill then clamps to nought, which is what
+	 * the pin would have said anyway.
+	 */
+	private Set<Integer> staticLodTargets() {
+		Set<Integer> reads = new HashSet<>();
+		int[] lines = this.tokens.lineNumbers();
+		for (int index = 0; index < this.tokens.size(); index++) {
+			Token token = this.tokens.get(index);
+			if (token.kind() != Kind.IDENTIFIER || token.directive() != null || token.macroName()
+					|| (!token.text().equals("textureLod") && !token.text().equals("textureLodOffset"))
+					|| this.packMacros.contains(token.text())) {
+				continue;
+			}
+
+			int open = this.tokens.callOpener(index);
+			int close = this.tokens.matchingBracket(open);
+			int first = this.tokens.significantAfter(open);
+			if (open < 0 || close < 0 || first < 0 || first >= close
+					|| this.tokens.get(first).kind() != Kind.IDENTIFIER) {
+				continue;
+			}
+
+			String name = this.tokens.get(first).text();
+			if (this.packMacros.contains(name)
+					|| scoped(this.samplerParameters, name, lines[index])) {
+				continue;
+			}
+
+			// The third top-level argument is the level; fewer than three is not a lod form.
+			// textureLodOffset carries the offset fourth, still after the level.
+			int depth = 0;
+			int commas = 0;
+			StringBuilder level = new StringBuilder();
+			for (int at = open + 1; at < close; at++) {
+				Token one = this.tokens.get(at);
+				if (one.operator("(") || one.operator("[")) {
+					depth++;
+				} else if (one.operator(")") || one.operator("]")) {
+					depth--;
+				} else if (depth == 0 && one.operator(",")) {
+					commas++;
+				} else if (commas == 2 && one.kind() != Kind.SPACE && one.kind() != Kind.COMMENT
+						&& one.kind() != Kind.NEWLINE) {
+					level.append(one.text());
+				}
+			}
+
+			if (commas < 2 || level.length() == 0 || isZeroLevel(level.toString())) {
+				continue;
+			}
+
+			OptionalInt target = TargetName.index(name);
+			if (target.isPresent()) {
+				reads.add(target.getAsInt());
+			}
+		}
+
+		return reads;
+	}
+
+	/** Whether a level reads as statically nought, paint and suffixes stripped. */
+	private static boolean isZeroLevel(String level) {
+		String text = level.trim();
+		while (text.startsWith("(") && text.endsWith(")")) {
+			text = text.substring(1, text.length() - 1).trim();
+		}
+
+		return text.matches("0(\\.0*)?([uUlLfF]*)?");
 	}
 
 	/**
